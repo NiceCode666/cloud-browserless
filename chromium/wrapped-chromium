@@ -1,0 +1,41 @@
+#!/bin/bash
+# Override of /usr/bin/wrapped-chromium.
+# Always launches chromium with CDP remote debugging enabled,
+# regardless of how it is invoked (autostart / menu / terminal).
+
+BIN=/usr/bin/chromium
+
+# Chromium refuses to relaunch while the Singleton lock file is present
+# from a previous session. Clean it up when no chromium is running.
+if ! pgrep chromium > /dev/null; then
+  rm -f "$HOME/.config/chromium/Singleton"*
+fi
+
+# Flags we always force. "$@" is appended so menu entries / scripts can
+# still add their own flags on top.
+CDP_FLAGS=(
+  --remote-debugging-port=9222
+  --remote-allow-origins=*
+)
+
+if grep -q 'Seccomp:.0' /proc/1/status; then
+  exec "$BIN" \
+    --no-first-run \
+    --password-store=basic \
+    --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
+    --start-maximized \
+    --user-data-dir \
+    "${CDP_FLAGS[@]}" \
+    "$@" > /dev/null 2>&1
+else
+  exec "$BIN" \
+    --no-first-run \
+    --no-sandbox \
+    --password-store=basic \
+    --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
+    --start-maximized \
+    --test-type \
+    --user-data-dir \
+    "${CDP_FLAGS[@]}" \
+    "$@" > /dev/null 2>&1
+fi

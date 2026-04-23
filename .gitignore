@@ -1,0 +1,18 @@
+# 敏感凭据
+.env
+.env.*
+!.env.example
+
+# 每次部署生成的证书 (私钥不得入库)
+gateway/certs/
+
+# 浏览器 profile / proot 装的 App 数据
+chromium-config/
+
+# macOS / 编辑器杂项
+.DS_Store
+*.swp
+*~
+
+# Claude Code 会话数据
+.claude/

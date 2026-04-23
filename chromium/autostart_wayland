@@ -1,0 +1,4 @@
+#!/bin/bash
+# Plan A (wayland 版本): 开机不自动启动任何 App，保留一个干净的云桌面。
+# Chromium / 其他 App 由用户手动打开（通过菜单/终端）。
+exit 0

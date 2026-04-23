@@ -1,0 +1,42 @@
+services:
+  chromium:
+    image: linuxserver/chromium:latest
+    container_name: cloud-chromium
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Asia/Shanghai
+      # Web UI 登录凭据（从 .env 读取，避免明文写死）
+      CUSTOM_USER: "${WEB_USER:-admin}"
+      PASSWORD: "${WEB_PASSWORD:?WEB_PASSWORD is required in .env}"
+    ports:
+      # Web UI：外部 HTTPS ${WEB_PORT} -> 容器内 nginx TLS 终结(3443) -> selkies HTTP 3000
+      - "${WEB_PORT:-3000}:3443"
+      # CDP：外部 HTTP ${CDP_PORT} -> 容器内 nginx(9443) -> chromium 127.0.0.1:9222
+      - "${CDP_PORT:-9222}:9443"
+      # CDP 明文入口，仅绑宿主 loopback，只能通过 SSH 隧道访问；公网不可达
+      - "127.0.0.1:9223:9080"
+    volumes:
+      - ./chromium-config:/config
+      # Plan A: 覆盖 autostart（X11 与 Wayland 两个版本），开机不强拉任何 App
+      - ./chromium/autostart:/defaults/autostart:ro
+      - ./chromium/autostart_wayland:/defaults/autostart_wayland:ro
+      # 覆盖 chromium 包装器：任何方式打开 chromium 都自动带 CDP 参数
+      - ./chromium/wrapped-chromium:/usr/bin/wrapped-chromium:ro
+    shm_size: "2gb"
+    restart: unless-stopped
+
+  # CDP 安全网关：TLS + secret token 前缀鉴权
+  cdp-gateway:
+    image: nginx:alpine
+    container_name: cloud-chromium-gateway
+    # 和 chromium 共用网络命名空间，可以直接访问其 127.0.0.1:9222
+    network_mode: "service:chromium"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./gateway/certs:/etc/nginx/certs:ro
+    depends_on:
+      - chromium
+    restart: unless-stopped

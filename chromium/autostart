@@ -1,0 +1,4 @@
+#!/bin/bash
+# Plan A: 开机不自动启动任何 App，保留一个干净的云桌面。
+# 用户通过菜单/终端自行打开 Chromium / Firefox / VSCode 等。
+exit 0
