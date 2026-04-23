@@ -128,6 +128,149 @@ bridgic-browser open https://example.com --cdp "$WS"
 
 ---
 
+## 性能调优
+
+> **机器规格对体感影响极大**。在 2vCPU / 3GB RAM 的机器上，默认的 selkies 配置会让整机 load average 飙到 10+、操作延迟上秒。所以**所有调优项都通过 `.env` 可配置**，低配默认值保证能用，升级到生产规格的机器改几个数字就能跑到满画质。
+
+### 调优原理图
+
+```
+                  ↑ 需要更多 CPU
+ 高画质(1080p60) ┃                   ┌─ GPU 硬编码    (8vCPU + GPU)
+                 ┃                   │
+                 ┃     高配预设 ─────┤
+                 ┃                   └─ 软编码        (8vCPU, 无 GPU)
+  中画质(1080p60)┃
+                 ┃     中配预设  ─────── 软编码        (4vCPU/8GB)
+                 ┃
+  低画质(720p30) ┃     低配预设  ─────── 软编码+低内存模式 (2vCPU/3GB 默认)
+                 ┃
+                 ┃
+                 └────────────────────────────────────→ 机器性能
+```
+
+### 三档预设（在 `.env` 里切换）
+
+完整配置看项目根目录的 **`.env.example`**。服务器上对应文件是 `/opt/cloud-browser/.env`。
+
+#### 低配（2vCPU / 3~4GB, **默认值**）
+
+```env
+DISPLAY_WIDTH=1280
+DISPLAY_HEIGHT=720
+SELKIES_FRAMERATE=30
+SELKIES_VIDEO_BITRATE=4000
+CHROMIUM_MEM_LIMIT=2g
+CHROMIUM_CPUS=1.5
+CHROMIUM_SHM_SIZE=1g
+CHROMIUM_LOW_MEMORY_MODE=1
+CHROMIUM_JS_HEAP_MB=512
+```
+
+体感：能用；1280×720 流畅滚动/输入；1080p 视频会卡。**强烈建议配合 2GB swap**（见下）。
+
+#### 中配（4vCPU / 8GB, **推荐生产**）
+
+```env
+DISPLAY_WIDTH=1920
+DISPLAY_HEIGHT=1080
+SELKIES_FRAMERATE=60
+SELKIES_VIDEO_BITRATE=8000
+CHROMIUM_MEM_LIMIT=6g
+CHROMIUM_CPUS=3
+CHROMIUM_SHM_SIZE=2g
+CHROMIUM_LOW_MEMORY_MODE=0
+CHROMIUM_JS_HEAP_MB=2048
+```
+
+体感：无感，跟本地 Chrome 接近；多标签没压力。
+
+#### 高配（8vCPU+ / 16GB+ / 带 GPU）
+
+```env
+DISPLAY_WIDTH=1920
+DISPLAY_HEIGHT=1200
+SELKIES_FRAMERATE=60
+SELKIES_VIDEO_BITRATE=12000
+SELKIES_ENCODER=vah264enc            # Intel/AMD GPU 硬编
+# SELKIES_ENCODER=nvh264enc          # NVIDIA GPU（需要挂 /dev/nvidia*）
+CHROMIUM_MEM_LIMIT=12g
+CHROMIUM_CPUS=6
+CHROMIUM_LOW_MEMORY_MODE=0
+```
+
+体感：丝滑，看视频/剪音频都行；GPU 硬编几乎不占 CPU。
+
+### 改完怎么生效
+
+两条路都行，挑顺手的：
+
+```bash
+# 方式 1: 本地改 .env.example → git push → 到服务器 pull 后改 .env → 重启
+# 方式 2: 直接登录服务器改 .env，再重跑部署
+ssh root@<server> "vim /opt/cloud-browser/.env"
+./deploy.sh root@<server>     # 密码/token 不会被重置（除非加 --rotate）
+```
+
+### Swap 建议（低配机器强制要做）
+
+对 3~4GB 的机器，**一定要加 swap**。没有 swap：
+- Chromium + 视频编码 + PulseAudio 一瞬间就把内存填满
+- 内核狂刷 page cache 来腾空间 → 50% 以上的时间是 `%iowait`
+- SSH/sshd 都拿不到 CPU，服务器失联
+
+部署脚本自带 swap 选项：
+
+```bash
+# 第一次部署时一起做
+./deploy.sh root@<server> --swap 2g
+
+# 已经部署过的机器单独加
+./deploy.sh root@<server> --swap 2g
+```
+
+手工方式（如果不想用部署脚本）：
+
+```bash
+ssh root@<server>
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+### 诊断瓶颈
+
+怀疑卡顿时，按顺序排查：
+
+```bash
+# 1. 网络：ping + 带宽
+ping <server>                       # RTT 应 < 80ms；> 150ms 一定卡
+# 2. 服务器 load / 内存
+ssh <server> 'uptime; free -m | head -2'
+# load average 应 < 核心数；若超过 2× 核心数，服务器扛不住
+# available 应 > 500MB
+# 3. 容器资源用量
+ssh <server> 'docker stats --no-stream'
+# CPU 总和接近 CHROMIUM_CPUS × 100% 说明编码达到上限，需升机器或降画质
+# 4. Chromium 进程数
+ssh <server> 'docker exec cloud-chromium pgrep -c chromium'
+# 正常 5~15 个；突然变 30+ 多半是某个站起了很多 iframe 卡住了
+```
+
+### 常见故障 → 应对
+
+| 症状 | 原因 | 解决 |
+|---|---|---|
+| 点哪都卡，鼠标也跟不上 | CPU 满载，编码跟不上 | 降分辨率/帧率，或升机器 |
+| 操作几分钟后服务器失联（SSH 不通） | 内存不足 → thrashing | `./deploy.sh … --swap 2g` |
+| chromium 突然消失 | `mem_limit` 被命中，OOM-kill | 调大 `CHROMIUM_MEM_LIMIT` 或升机器 |
+| 打字有明显延迟 | 编码延迟 + 网络 RTT | 看 RTT，升配，或换更近机房 |
+| 视频播放严重卡顿 | 码率给太低 / 编码跟不上 | 提 `SELKIES_VIDEO_BITRATE`，或升级 |
+
+---
+
 ## 安全说明
 
 当前**默认配置**下的安全模型：
@@ -221,20 +364,21 @@ A: `linuxserver/chromium:latest` 来自 Docker Hub，通常受益于国内 mirro
 
 ```
 cloud-browserless/
-├── deploy.sh                       # 一键部署脚本
-├── docker-compose.yml              # chromium + nginx 网关
+├── deploy.sh                       # 一键部署脚本（含 swap、性能预设、幂等 .env 合并）
+├── docker-compose.yml              # chromium + nginx 网关；资源上限/画质 全部从 env 读
+├── .env.example                    # 所有可调参数文档化 + 三档预设
 ├── .gitignore
 ├── chromium/
 │   ├── autostart                   # Plan A: 空 X11 autostart
 │   ├── autostart_wayland           # Plan A: 空 Wayland autostart
-│   └── wrapped-chromium            # 包装器, 保证任何路径打开 Chromium 都带 CDP
+│   └── wrapped-chromium            # 包装器：CDP + 低内存模式(可关) + 自定义参数
 └── gateway/
     └── nginx.conf                  # CDP token 鉴权 + Web UI HTTPS 终结
 ```
 
 运行后服务器上另外会产生（均在 `.gitignore`）：
 
-- `.env` — 凭据
+- `.env` — 凭据和可调参数（首次由 `.env.example` 模板生成）
 - `gateway/certs/` — 自签证书
 - `chromium-config/` — 浏览器持久数据
 

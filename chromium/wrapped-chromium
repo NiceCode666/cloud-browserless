@@ -1,23 +1,47 @@
 #!/bin/bash
 # Override of /usr/bin/wrapped-chromium.
-# Always launches chromium with CDP remote debugging enabled,
-# regardless of how it is invoked (autostart / menu / terminal).
+# 无论怎么启动 Chromium（autostart / 菜单 / 终端），始终：
+#   1. 打开 CDP remote-debugging 端口
+#   2. 应用 V8 堆上限、进程限制等"低内存模式"参数（可通过 env 关闭）
 
 BIN=/usr/bin/chromium
 
-# Chromium refuses to relaunch while the Singleton lock file is present
-# from a previous session. Clean it up when no chromium is running.
+# Chromium 启动前清掉上次的 Singleton 锁（崩溃后留下的）
 if ! pgrep chromium > /dev/null; then
   rm -f "$HOME/.config/chromium/Singleton"*
 fi
 
-# Flags we always force. "$@" is appended so menu entries / scripts can
-# still add their own flags on top.
+# ---- 必须的标志：CDP ----
 CDP_FLAGS=(
   --remote-debugging-port=9222
   --remote-allow-origins=*
 )
 
+# ---- 低内存优化标志（低配机器受益，可通过环境变量关闭）----
+#  CHROMIUM_LOW_MEMORY_MODE=0   # 关掉（高配机器用）
+: "${CHROMIUM_LOW_MEMORY_MODE:=1}"
+LOW_MEM_FLAGS=()
+if [[ "$CHROMIUM_LOW_MEMORY_MODE" == "1" ]]; then
+  # V8 JS 堆上限，单位 MB
+  : "${CHROMIUM_JS_HEAP_MB:=512}"
+  LOW_MEM_FLAGS=(
+    --js-flags="--max-old-space-size=${CHROMIUM_JS_HEAP_MB}"
+    # 至多 2 个渲染进程，避免多标签爆内存
+    --renderer-process-limit=2
+    # 所有进程共享（不要为每个 site 开独立进程）
+    --process-per-site
+    # 关掉一些后台耗 CPU/内存的功能
+    --disable-background-timer-throttling
+    --disable-backgrounding-occluded-windows
+    --disable-renderer-backgrounding
+    --disable-features=TranslateUI,MediaRouter
+  )
+fi
+
+# ---- 用户自定义额外参数（env 注入）----
+read -ra EXTRA_FLAGS <<< "${CHROMIUM_EXTRA_FLAGS:-}"
+
+# ---- 原镜像脚本保留的公共参数 + seccomp 分支 ----
 if grep -q 'Seccomp:.0' /proc/1/status; then
   exec "$BIN" \
     --no-first-run \
@@ -26,6 +50,8 @@ if grep -q 'Seccomp:.0' /proc/1/status; then
     --start-maximized \
     --user-data-dir \
     "${CDP_FLAGS[@]}" \
+    "${LOW_MEM_FLAGS[@]}" \
+    "${EXTRA_FLAGS[@]}" \
     "$@" > /dev/null 2>&1
 else
   exec "$BIN" \
@@ -37,5 +63,7 @@ else
     --test-type \
     --user-data-dir \
     "${CDP_FLAGS[@]}" \
+    "${LOW_MEM_FLAGS[@]}" \
+    "${EXTRA_FLAGS[@]}" \
     "$@" > /dev/null 2>&1
 fi

@@ -7,10 +7,22 @@ services:
     environment:
       PUID: 1000
       PGID: 1000
-      TZ: Asia/Shanghai
+      TZ: "${TZ:-Asia/Shanghai}"
       # Web UI 登录凭据（从 .env 读取，避免明文写死）
       CUSTOM_USER: "${WEB_USER:-admin}"
       PASSWORD: "${WEB_PASSWORD:?WEB_PASSWORD is required in .env}"
+      # --- 画质调优（可在 .env 里覆盖）---
+      # 支持的 env 因镜像版本而异；以下几个是 selkies 常见且通用的
+      DISPLAY_WIDTH:          "${DISPLAY_WIDTH:-1280}"
+      DISPLAY_HEIGHT:         "${DISPLAY_HEIGHT:-720}"
+      DISPLAY_DPI:            "${DISPLAY_DPI:-96}"
+      SELKIES_FRAMERATE:      "${SELKIES_FRAMERATE:-30}"
+      SELKIES_VIDEO_BITRATE:  "${SELKIES_VIDEO_BITRATE:-4000}"
+      SELKIES_AUDIO_BITRATE:  "${SELKIES_AUDIO_BITRATE:-64000}"
+      SELKIES_ENCODER:        "${SELKIES_ENCODER:-x264enc}"
+      # --- Chromium 自身的 v8 堆上限（低内存环境防止 OOM 失控） ---
+      CHROMIUM_JS_HEAP_MB:    "${CHROMIUM_JS_HEAP_MB:-512}"
+      CHROMIUM_EXTRA_FLAGS:   "${CHROMIUM_EXTRA_FLAGS:-}"
     ports:
       # Web UI：外部 HTTPS ${WEB_PORT} -> 容器内 nginx TLS 终结(3443) -> selkies HTTP 3000
       - "${WEB_PORT:-3000}:3443"
@@ -25,10 +37,14 @@ services:
       - ./chromium/autostart_wayland:/defaults/autostart_wayland:ro
       # 覆盖 chromium 包装器：任何方式打开 chromium 都自动带 CDP 参数
       - ./chromium/wrapped-chromium:/usr/bin/wrapped-chromium:ro
-    shm_size: "2gb"
+    # 资源上限，防止 chromium 失控时拖死宿主(sshd、docker daemon 等)
+    # 低配机器(2C3.4G)默认 2g/1.5 核，留出 ~1.5G / 0.5 核 给系统
+    mem_limit:   "${CHROMIUM_MEM_LIMIT:-2g}"
+    cpus:        "${CHROMIUM_CPUS:-1.5}"
+    shm_size:    "${CHROMIUM_SHM_SIZE:-1g}"
     restart: unless-stopped
 
-  # CDP 安全网关：TLS + secret token 前缀鉴权
+  # CDP 安全网关：token 前缀鉴权
   cdp-gateway:
     image: nginx:alpine
     container_name: cloud-chromium-gateway
@@ -39,4 +55,6 @@ services:
       - ./gateway/certs:/etc/nginx/certs:ro
     depends_on:
       - chromium
+    # 网关很轻，给点上限足以
+    mem_limit: "${GATEWAY_MEM_LIMIT:-128m}"
     restart: unless-stopped
