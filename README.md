@@ -38,18 +38,46 @@
 
 ## 快速开始
 
-### 准备
+本项目有两个入口脚本，按场景选：
 
-- 一台能 SSH 免密登录的服务器，已装 Docker + docker compose
-- 防火墙 / 安全组放开 Web UI 和 CDP 两个端口（默认 3000 + 9222）
-- 本地有 `rsync`, `openssl`, `ssh`, `curl`
+| 场景 | 入口 | 端口 | 配置文件 |
+|---|---|---|---|
+| **在自己机器上跑（Mac / 个人 Linux）** | `./run-local.sh` | 绑 `127.0.0.1`，默认 13000/19222（避开本机 Chrome 的 9222） | `.env.local` |
+| **部署到远程服务器共享/对外服务** | `./deploy.sh root@<host>` | 绑 `0.0.0.0`，默认 3000/9222 | 服务器上 `/opt/cloud-browser/.env` |
 
-### 一行部署
+### 本地运行（最简单）
 
 ```bash
 git clone git@github.com:NiceCode666/cloud-browserless.git
 cd cloud-browserless
+./run-local.sh
+
+# 启动完会输出 https://localhost:13000/ 和用户名/密码
+./run-local.sh open        # 一键在浏览器里打开
+```
+
+本地默认用**中配预设**（1080p60, 4 核 / 4 GB 容器），适合 M 系列 Mac / 8C16G 的 Linux。
+资源紧张就改 `.env.local` 里的 `CHROMIUM_*` 和 `DISPLAY_*`，再 `./run-local.sh restart`。
+
+常用：
+
+```bash
+./run-local.sh              # 启动/更新
+./run-local.sh ps           # 看状态
+./run-local.sh logs         # 跟日志
+./run-local.sh restart      # 重启
+./run-local.sh down         # 停掉（保留数据）
+./run-local.sh nuke         # 删除凭据/证书（保留 chromium-config 浏览器数据）
+./run-local.sh --rotate     # 重置密码/token
+```
+
+### 远程服务器部署
+
+前置：目标机器已装 Docker / docker compose，SSH 免密登录，防火墙放开 3000 + 9222。
+
+```bash
 ./deploy.sh root@<your-server>
+./deploy.sh root@<your-server> --swap 2g    # 低配机器强烈建议 +2GB swap
 ```
 
 脚本会：
@@ -364,8 +392,10 @@ A: `linuxserver/chromium:latest` 来自 Docker Hub，通常受益于国内 mirro
 
 ```
 cloud-browserless/
-├── deploy.sh                       # 一键部署脚本（含 swap、性能预设、幂等 .env 合并）
-├── docker-compose.yml              # chromium + nginx 网关；资源上限/画质 全部从 env 读
+├── run-local.sh                    # 本地一键脚本（Mac/个人 Linux，绑 127.0.0.1）
+├── deploy.sh                       # 远程部署脚本（含 swap、性能预设、幂等 .env 合并）
+├── docker-compose.yml              # 主 compose；资源上限/画质 全部从 env 读
+├── docker-compose.local.yml        # 本地运行覆盖（端口绑 127.0.0.1）
 ├── .env.example                    # 所有可调参数文档化 + 三档预设
 ├── .gitignore
 ├── chromium/

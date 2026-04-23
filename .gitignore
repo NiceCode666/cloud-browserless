@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# run-local 生成的配置
+.env.local
+
 # 每次部署生成的证书 (私钥不得入库)
 gateway/certs/
 

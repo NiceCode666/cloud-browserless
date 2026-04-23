@@ -1,0 +1,16 @@
+# 本地运行专用覆盖文件
+# 与主 docker-compose.yml 一起使用:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# 或更简单:
+#   ./run-local.sh
+#
+# 区别于远程部署:
+#   - 所有端口绑定到 127.0.0.1 (localhost only, 不暴露到局域网)
+#   - 其他配置 (资源上限/画质) 通过 .env.local 覆盖
+
+services:
+  chromium:
+    ports: !override
+      - "127.0.0.1:${WEB_PORT:-3000}:3443"
+      - "127.0.0.1:${CDP_PORT:-9222}:9443"
+      - "127.0.0.1:9223:9080"      # 本地保留此端口（尽管 loopback 已本地化，保持一致）
