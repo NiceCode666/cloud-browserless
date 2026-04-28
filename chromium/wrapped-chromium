@@ -7,13 +7,18 @@
 BIN=/usr/bin/chromium
 
 # Chromium 启动前清掉上次的 Singleton 锁（崩溃后留下的）
+# user-data-dir 已固定到 /profile（持久化挂载），锁文件清这一处即可
 if ! pgrep chromium > /dev/null; then
-  rm -f "$HOME/.config/chromium/Singleton"*
+  rm -f /profile/Singleton*
 fi
 
 # ---- 必须的标志：CDP ----
+# remote-debugging-address=0.0.0.0 让 chromium 在容器内 0.0.0.0:9222 监听，
+# 这样 cdp-gateway 容器（在 chromium-net bridge 上）能通过 DNS 名 `chromium:9222` 访问。
+# 9222 不映射到宿主，所以宿主 / 公网都无法直连，安全由 gateway 的 token 鉴权提供。
 CDP_FLAGS=(
   --remote-debugging-port=9222
+  --remote-debugging-address=0.0.0.0
   --remote-allow-origins=*
 )
 
@@ -48,7 +53,7 @@ if grep -q 'Seccomp:.0' /proc/1/status; then
     --password-store=basic \
     --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
     --start-maximized \
-    --user-data-dir \
+    --user-data-dir=/profile \
     "${CDP_FLAGS[@]}" \
     "${LOW_MEM_FLAGS[@]}" \
     "${EXTRA_FLAGS[@]}" \
@@ -61,7 +66,7 @@ else
     --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
     --start-maximized \
     --test-type \
-    --user-data-dir \
+    --user-data-dir=/profile \
     "${CDP_FLAGS[@]}" \
     "${LOW_MEM_FLAGS[@]}" \
     "${EXTRA_FLAGS[@]}" \

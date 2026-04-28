@@ -1,6 +1,8 @@
 services:
   chromium:
-    image: linuxserver/chromium:latest
+    # 钉在 Wayland 切默认（2026-03-31）之前最后一个 Selkies tag。
+    # latest/ls26+ 上 pixelflux 走 Wayland 软件渲染路径，在 Docker Desktop (LinuxKit) 内核会 EOPNOTSUPP 崩溃。
+    image: linuxserver/chromium:cc0cbc1c-ls25
     container_name: cloud-chromium
     security_opt:
       - seccomp:unconfined
@@ -23,15 +25,17 @@ services:
       # --- Chromium 自身的 v8 堆上限（低内存环境防止 OOM 失控） ---
       CHROMIUM_JS_HEAP_MB:    "${CHROMIUM_JS_HEAP_MB:-512}"
       CHROMIUM_EXTRA_FLAGS:   "${CHROMIUM_EXTRA_FLAGS:-}"
-    ports:
-      # Web UI：外部 HTTPS ${WEB_PORT} -> 容器内 nginx TLS 终结(3443) -> selkies HTTP 3000
-      - "${WEB_PORT:-3000}:3443"
-      # CDP：外部 HTTP ${CDP_PORT} -> 容器内 nginx(9443) -> chromium 127.0.0.1:9222
-      - "${CDP_PORT:-9222}:9443"
-      # CDP 明文入口，仅绑宿主 loopback，只能通过 SSH 隧道访问；公网不可达
-      - "127.0.0.1:9223:9080"
+    # 不直接对宿主开端口；只在内部 bridge `chromium-net` 上向 cdp-gateway 暴露。
+    # 入口由 gateway 统一持有（TLS / token 鉴权都在那一侧）。
+    expose:
+      - "3000"   # selkies HTTP（Web UI 内部端口）
+      - "9222"   # CDP（仅 chromium-net 可达，宿主不可达）
+    networks:
+      - chromium-net
     volumes:
       - ./chromium-config:/config
+      # Chromium 用户档案单独挂载，方便备份/迁移；wrapped-chromium 已写死 --user-data-dir=/profile
+      - ./chromium-profile:/profile
       # Plan A: 覆盖 autostart（X11 与 Wayland 两个版本），开机不强拉任何 App
       - ./chromium/autostart:/defaults/autostart:ro
       - ./chromium/autostart_wayland:/defaults/autostart_wayland:ro
@@ -44,12 +48,19 @@ services:
     shm_size:    "${CHROMIUM_SHM_SIZE:-1g}"
     restart: unless-stopped
 
-  # CDP 安全网关：token 前缀鉴权
+  # CDP 安全网关：TLS 终结 + token 前缀鉴权 + 唯一对外入口
   cdp-gateway:
     image: nginx:alpine
     container_name: cloud-chromium-gateway
-    # 和 chromium 共用网络命名空间，可以直接访问其 127.0.0.1:9222
-    network_mode: "service:chromium"
+    networks:
+      - chromium-net
+    ports:
+      # Web UI：外部 HTTPS ${WEB_PORT} -> gateway TLS(3443) -> chromium:3000
+      - "${WEB_PORT:-3000}:3443"
+      # CDP 网关：外部 HTTP ${CDP_PORT} -> gateway nginx(9443) -> chromium:9222
+      - "${CDP_PORT:-9222}:9443"
+      # CDP 明文入口，仅绑宿主 loopback，只能通过 SSH 隧道访问；公网不可达
+      - "127.0.0.1:9223:9080"
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./gateway/certs:/etc/nginx/certs:ro
@@ -58,3 +69,9 @@ services:
     # 网关很轻，给点上限足以
     mem_limit: "${GATEWAY_MEM_LIMIT:-128m}"
     restart: unless-stopped
+
+# Chromium 与 gateway 走专属 bridge 网络，gateway 通过 DNS 名 `chromium` 访问。
+# 这样 chromium 重启 / 重建都不影响 gateway —— 没有共享 netns 的脆弱耦合。
+networks:
+  chromium-net:
+    driver: bridge

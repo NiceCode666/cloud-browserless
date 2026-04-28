@@ -158,14 +158,11 @@ echo ""
 echo "🚀 启动 docker compose..."
 "${COMPOSE[@]}" up -d --remove-orphans
 
-echo "  ↳ 等 chromium 就绪..."
+echo "  ↳ 等容器就绪..."
 for i in $(seq 1 30); do
-  "${COMPOSE[@]}" ps chromium --format '{{.Status}}' 2>/dev/null | grep -q '^Up' && break
+  "${COMPOSE[@]}" ps cdp-gateway --format '{{.Status}}' 2>/dev/null | grep -q '^Up' && break
   sleep 2
 done
-
-echo "  ↳ 重建 gateway (共享 netns)..."
-"${COMPOSE[@]}" up -d --force-recreate cdp-gateway
 sleep 2
 
 # ---- 6. 验证 ----

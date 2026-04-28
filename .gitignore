@@ -9,7 +9,10 @@
 # 每次部署生成的证书 (私钥不得入库)
 gateway/certs/
 
-# 浏览器 profile / proot 装的 App 数据
+# 浏览器用户档案（cookies/扩展/登录态，由 --user-data-dir=/profile 落盘）
+chromium-profile/
+
+# proot 装的 App 数据 / 桌面环境状态
 chromium-config/
 
 # macOS / 编辑器杂项
