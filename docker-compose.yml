@@ -48,6 +48,19 @@ services:
     shm_size:    "${CHROMIUM_SHM_SIZE:-1g}"
     restart: unless-stopped
 
+  # CDP 中继：socat 旁车，与 chromium 共享 netns。
+  # 起因：Chromium 130+ 出于安全考虑静默忽略 `--remote-debugging-address=0.0.0.0`，
+  # CDP 实际只监听 127.0.0.1:9222。旁车在 chromium netns 内把 0.0.0.0:19222 -> 127.0.0.1:9222，
+  # 让 cdp-gateway（独立 netns，走 chromium-net bridge）可以通过 chromium:19222 访问。
+  cdp-relay:
+    image: alpine/socat:latest
+    container_name: cloud-chromium-cdp-relay
+    network_mode: "service:chromium"
+    command: TCP-LISTEN:19222,fork,reuseaddr TCP:127.0.0.1:9222
+    depends_on:
+      - chromium
+    restart: unless-stopped
+
   # CDP 安全网关：TLS 终结 + token 前缀鉴权 + 唯一对外入口
   cdp-gateway:
     image: nginx:alpine
